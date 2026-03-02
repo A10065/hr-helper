@@ -1,0 +1,5 @@
+{
+  "name": "HR 抽籤分組小助手",
+  "description": "專為 HR 設計的工具，支援名單匯入、動畫抽獎及自動分組功能。",
+  "requestFramePermissions": []
+}
