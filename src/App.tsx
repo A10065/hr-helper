@@ -4,14 +4,14 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { 
-  Users, 
-  Trophy, 
-  UserPlus, 
-  Upload, 
-  Trash2, 
-  RotateCcw, 
-  Play, 
+import {
+  Users,
+  Trophy,
+  UserPlus,
+  Upload,
+  Trash2,
+  RotateCcw,
+  Play,
   CheckCircle2,
   LayoutGrid,
   ClipboardList,
@@ -27,7 +27,7 @@ import { cn } from './lib/utils';
 import { Person, TabType } from './types';
 
 const MOCK_NAMES = [
-  '陳小明', '林美玲', '張大衛', '王曉華', '李建國', 
+  '陳小明', '林美玲', '張大衛', '王曉華', '李建國',
   '黃淑芬', '吳志強', '蔡依林', '周杰倫', '許瑋甯',
   '劉德華', '郭富城', '黎明', '張學友', '金城武'
 ];
@@ -36,7 +36,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('input');
   const [names, setNames] = useState<Person[]>([]);
   const [inputText, setInputText] = useState('');
-  
+
   // Lucky Draw State
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentWinner, setCurrentWinner] = useState<Person | null>(null);
@@ -56,12 +56,46 @@ export default function App() {
 
   const hasDuplicates = Object.values(nameCounts).some((count: number) => count > 1);
 
+  const [pendingNames, setPendingNames] = useState<Person[]>([]);
+  const [selectedPendingIds, setSelectedPendingIds] = useState<Set<string>>(new Set());
+
   const handleLoadMockData = () => {
     const mockData = MOCK_NAMES.map(name => ({
       id: Math.random().toString(36).substr(2, 9),
       name
     }));
-    setNames(prev => [...prev, ...mockData]);
+
+    // 加上一點重複名單供測試
+    const duplicates = MOCK_NAMES.slice(0, 3).map(name => ({
+      id: Math.random().toString(36).substr(2, 9),
+      name
+    }));
+
+    const combined = [...mockData, ...duplicates];
+    setPendingNames(combined);
+    setSelectedPendingIds(new Set(combined.map(p => p.id)));
+  };
+
+  const handleAddSelected = () => {
+    const toAdd = pendingNames.filter(p => selectedPendingIds.has(p.id));
+    setNames(prev => [...prev, ...toAdd]);
+    setPendingNames([]);
+    setSelectedPendingIds(new Set());
+  };
+
+  const togglePendingSelection = (id: string) => {
+    const next = new Set(selectedPendingIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelectedPendingIds(next);
+  };
+
+  const toggleAllPending = () => {
+    if (selectedPendingIds.size === pendingNames.length) {
+      setSelectedPendingIds(new Set());
+    } else {
+      setSelectedPendingIds(new Set(pendingNames.map(p => p.id)));
+    }
   };
 
   const handleRemoveDuplicates = () => {
@@ -74,22 +108,56 @@ export default function App() {
     setNames(uniqueNames);
   };
 
-  const handleDownloadGroupsCSV = () => {
+  const handleSaveGroupsFile = async () => {
     if (groups.length === 0) return;
-    const csvData = groups.flatMap((group, idx) => 
-      group.map(person => ({ '組別': `第 ${idx + 1} 組`, '姓名': person.name }))
-    );
-    const csv = Papa.unparse(csvData);
-    // Add BOM for Excel Chinese character support
-    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `分組結果_${new Date().toLocaleDateString()}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+
+    // 產生格式化文本內容
+    const date = new Date();
+    const dateString = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`;
+    let content = `HR 分組報告 - 產生日期: ${dateString}\n`;
+    content += `==================================\n\n`;
+
+    groups.forEach((group, idx) => {
+      content += `【第 ${idx + 1} 組】(${group.length} 人)\n`;
+      content += `------------------\n`;
+      group.forEach(person => {
+        content += `• ${person.name}\n`;
+      });
+      content += `\n`;
+    });
+
+    // 檢查瀏覽器是否支援 showSaveFilePicker (File System Access API)
+    if ('showSaveFilePicker' in window) {
+      try {
+        const handle = await (window as any).showSaveFilePicker({
+          suggestedName: `分組報告_${dateString}.txt`,
+          types: [{
+            description: '文字檔案',
+            accept: { 'text/plain': ['.txt'] },
+          }],
+        });
+
+        const writable = await handle.createWritable();
+        await writable.write(content);
+        await writable.close();
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          console.error('儲存檔案時發生錯誤:', err);
+        }
+      }
+    } else {
+      // Fallback: 傳統下載方法
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8;' });
+      const link = document.body.appendChild(document.createElement('a'));
+      const url = URL.createObjectURL(blob);
+      link.href = url;
+      link.download = `分報告_${dateString}.txt`;
+      link.click();
+      setTimeout(() => {
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      }, 0);
+    }
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -105,7 +173,9 @@ export default function App() {
             id: Math.random().toString(36).substr(2, 9),
             name: n.trim()
           }));
-        setNames(prev => [...prev, ...parsedNames]);
+
+        setPendingNames(parsedNames);
+        setSelectedPendingIds(new Set(parsedNames.map(p => p.id)));
       },
       header: false
     });
@@ -129,18 +199,20 @@ export default function App() {
     setNames(names.filter(n => n.id !== id));
   };
 
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+
   const clearAllNames = () => {
-    if (confirm('確定要清除所有名單嗎？')) {
-      setNames([]);
-      setWinners([]);
-      setDrawHistory([]);
-      setGroups([]);
-    }
+    setNames([]);
+    setWinners([]);
+    setDrawHistory([]);
+    setGroups([]);
+    setInputText('');
+    setShowClearConfirm(false);
   };
 
   const startDraw = () => {
     if (names.length === 0) return;
-    
+
     let pool = names;
     if (!allowRepeat) {
       pool = names.filter(n => !drawHistory.find(h => h.id === n.id));
@@ -181,14 +253,14 @@ export default function App() {
 
   const handleGrouping = () => {
     if (names.length === 0) return;
-    
+
     const shuffled = [...names].sort(() => Math.random() - 0.5);
     const result: Person[][] = [];
-    
+
     for (let i = 0; i < shuffled.length; i += groupSize) {
       result.push(shuffled.slice(i, i + groupSize));
     }
-    
+
     setGroups(result);
   };
 
@@ -270,7 +342,7 @@ export default function App() {
                         載入模擬名單
                       </button>
                     </div>
-                    
+
                     <div className="space-y-4">
                       <div className="relative border-2 border-dashed border-slate-200 rounded-xl p-8 text-center hover:border-indigo-400 transition-colors group cursor-pointer">
                         <input
@@ -326,19 +398,109 @@ export default function App() {
                         </button>
                       )}
                       {names.length > 0 && (
-                        <button
-                          onClick={clearAllNames}
-                          className="text-red-500 hover:text-red-600 text-sm font-medium flex items-center gap-1"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                          清空
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <AnimatePresence mode="wait">
+                            {!showClearConfirm ? (
+                              <motion.button
+                                initial={{ opacity: 0, x: 20 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: 20 }}
+                                onClick={() => setShowClearConfirm(true)}
+                                className="text-red-500 hover:text-red-600 text-sm font-medium flex items-center gap-1 bg-red-50 px-2 py-1 rounded-lg hover:bg-red-100 transition-colors"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                                清空
+                              </motion.button>
+                            ) : (
+                              <motion.div
+                                initial={{ opacity: 0, x: 20 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                exit={{ opacity: 0, x: 20 }}
+                                className="flex items-center gap-1.5 bg-red-600 text-white rounded-lg p-1 pr-2"
+                              >
+                                <button
+                                  onClick={clearAllNames}
+                                  className="bg-white text-red-600 text-[10px] font-bold px-2 py-0.5 rounded hover:bg-red-50 transition-colors"
+                                >
+                                  確認
+                                </button>
+                                <button
+                                  onClick={() => setShowClearConfirm(false)}
+                                  className="text-[10px] font-bold px-1 hover:text-red-200 transition-colors"
+                                >
+                                  取消
+                                </button>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
                       )}
                     </div>
                   </div>
-                  
-                  <div className="flex-1 overflow-y-auto max-h-[400px] pr-2 custom-scrollbar">
-                    {names.length === 0 ? (
+
+                  <div className="flex-1 overflow-y-auto max-h-[500px] pr-2 custom-scrollbar">
+                    {/* 待加入名單 (Staging) */}
+                    <AnimatePresence>
+                      {pendingNames.length > 0 && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.95 }}
+                          className="mb-6 bg-slate-50 border border-slate-200 rounded-xl p-4 sticky top-0 z-10 shadow-sm"
+                        >
+                          <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-200">
+                            <label className="flex items-center gap-2 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={selectedPendingIds.size === pendingNames.length && pendingNames.length > 0}
+                                onChange={toggleAllPending}
+                                className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300"
+                              />
+                              <span className="text-sm font-bold text-slate-800">待加入名單 ({selectedPendingIds.size}/{pendingNames.length})</span>
+                            </label>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => setPendingNames([])}
+                                className="text-xs text-slate-500 hover:text-slate-700 font-medium px-2 py-1"
+                              >
+                                取消
+                              </button>
+                              <button
+                                onClick={handleAddSelected}
+                                disabled={selectedPendingIds.size === 0}
+                                className="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-indigo-700 disabled:opacity-50 transition-all flex items-center gap-1"
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                                確認加入
+                              </button>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+                            {pendingNames.map((p) => (
+                              <label
+                                key={p.id}
+                                className={cn(
+                                  "flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-all border",
+                                  selectedPendingIds.has(p.id)
+                                    ? "bg-white border-indigo-200 text-indigo-700 shadow-sm"
+                                    : "bg-slate-100/50 border-transparent text-slate-500 hover:border-slate-200"
+                                )}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={selectedPendingIds.has(p.id)}
+                                  onChange={() => togglePendingSelection(p.id)}
+                                  className="w-3.5 h-3.5 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300"
+                                />
+                                <span className="text-xs font-medium truncate">{p.name}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    {names.length === 0 && pendingNames.length === 0 ? (
                       <div className="h-full flex flex-col items-center justify-center text-slate-400 py-12">
                         <ClipboardList className="w-12 h-12 mb-2 opacity-20" />
                         <p>尚未匯入任何名單</p>
@@ -350,8 +512,8 @@ export default function App() {
                             key={person.id}
                             className={cn(
                               "flex items-center justify-between p-2 rounded-lg group transition-colors",
-                              (nameCounts[person.name] || 0) > 1 
-                                ? "bg-red-50 border border-red-100" 
+                              (nameCounts[person.name] || 0) > 1
+                                ? "bg-red-50 border border-red-100"
                                 : "bg-slate-50 hover:bg-slate-100"
                             )}
                           >
@@ -387,7 +549,7 @@ export default function App() {
                 <div className="lg:col-span-2 space-y-6">
                   <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-200 text-center relative overflow-hidden">
                     <div className="absolute top-0 left-0 w-full h-1 bg-indigo-600" />
-                    
+
                     <div className="mb-8">
                       <h2 className="text-2xl font-bold text-slate-900 mb-2">幸運大抽獎</h2>
                       <p className="text-slate-500">點擊按鈕開始隨機抽取一位幸運兒</p>
@@ -403,7 +565,7 @@ export default function App() {
                             className="text-center"
                           >
                             <motion.div
-                              animate={isDrawing ? { 
+                              animate={isDrawing ? {
                                 scale: [1, 1.1, 1],
                                 transition: { repeat: Infinity, duration: 0.2 }
                               } : {}}
@@ -534,11 +696,11 @@ export default function App() {
                         <h2 className="text-xl font-bold text-slate-900">自動分組工具</h2>
                         {groups.length > 0 && (
                           <button
-                            onClick={handleDownloadGroupsCSV}
+                            onClick={handleSaveGroupsFile}
                             className="flex items-center gap-1.5 text-xs font-semibold text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-100 hover:bg-emerald-100 transition-colors"
                           >
                             <Download className="w-3.5 h-3.5" />
-                            下載 CSV
+                            匯出報告
                           </button>
                         )}
                       </div>
